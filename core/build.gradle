@@ -1,0 +1,26 @@
+[compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
+eclipse.project.name = appName + '-core'
+
+dependencies {
+  api "com.badlogicgames.gdx:gdx:$gdxVersion"
+
+  if (enableGraalNative == 'true') {
+    implementation "io.github.berstanio:gdx-svmhelper-annotations:$graalHelperVersion"
+  }
+
+  implementation(platform("org.lwjgl:lwjgl-bom:$lwjgl3Version"))
+
+  implementation("org.lwjgl:lwjgl")
+  implementation("org.lwjgl:lwjgl-harfbuzz")
+  implementation("org.lwjgl:lwjgl-harfbuzz::natives-linux")
+  implementation("org.lwjgl:lwjgl-harfbuzz::natives-linux-arm32")
+  implementation("org.lwjgl:lwjgl-harfbuzz::natives-linux-arm64")
+  implementation("org.lwjgl:lwjgl-harfbuzz::natives-macos")
+  implementation("org.lwjgl:lwjgl-harfbuzz::natives-macos-arm64")
+  implementation("org.lwjgl:lwjgl-harfbuzz::natives-windows")
+  implementation("org.lwjgl:lwjgl-harfbuzz::natives-windows-x86")
+}
+
+jar {
+  duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
