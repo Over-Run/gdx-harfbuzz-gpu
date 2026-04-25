@@ -2,6 +2,7 @@ package io.github.overrun.gdxhbgpu.demo;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.assets.AssetManager;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
@@ -28,9 +29,18 @@ public class Main extends ApplicationAdapter {
     private int glyphOriginVbo;
     private int glyphSizeVbo;
     private final ScreenViewport viewport = new ScreenViewport();
+    private float scale = 1;
 
     @Override
     public void create() {
+        Gdx.input.setInputProcessor(new InputAdapter() {
+            @Override
+            public boolean scrolled(float amountX, float amountY) {
+                scale -= amountY * 0.1f;
+                return true;
+            }
+        });
+
         assetManager = new AssetManager();
         assetManager.setLoader(HBBlob.class, new HBBlobLoader(assetManager.getFileHandleResolver()));
         assetManager.load("font/font", HBBlob.class);
@@ -39,7 +49,7 @@ public class Main extends ApplicationAdapter {
         hbBlob = assetManager.get("font/font");
         hbFont = new HBFont(hbBlob, 0);
         hbText = new HBText(hbFont);
-        hbText.create("你好世界！Hello world!");
+        hbText.create("你好世界！The quick brown fox jumps over the lazy dog.");
         shaderProgram = HBRenderer.createShader();
 
         glyphMesh = new GlyphMesh();
@@ -52,6 +62,7 @@ public class Main extends ApplicationAdapter {
         FloatBuffer originBuffer = BufferUtils.newFloatBuffer(glyphInfoList.size() * 2);
         FloatBuffer sizeBuffer = BufferUtils.newFloatBuffer(glyphInfoList.size() * 2);
         float currentX = 0;
+        float baselineY = 0;
         for (GlyphInfo glyphInfo : glyphInfoList) {
             float originX = glyphInfo.xBearing;
             float originY = glyphInfo.yBearing;
@@ -60,14 +71,14 @@ public class Main extends ApplicationAdapter {
 
             glyphLocBuffer.put(glyphInfo.glyphLoc);
 
-            posBuffer.put(currentX);
-            posBuffer.put(0);
+            posBuffer.put(currentX + glyphInfo.xOffset);
+            posBuffer.put(baselineY + glyphInfo.yOffset);
             originBuffer.put(originX);
             originBuffer.put(originY);
             sizeBuffer.put(width);
             sizeBuffer.put(height);
 
-            currentX += glyphInfo.hAdvance;
+            currentX += glyphInfo.xAdvance;
         }
         glyphLocBuffer.flip();
         posBuffer.flip();
@@ -119,7 +130,7 @@ public class Main extends ApplicationAdapter {
         shaderProgram.setUniformMatrix("u_projTrans", viewport.getCamera().combined);
         shaderProgram.setUniform4fv("u_color", new float[]{1.0f, 1.0f, 1.0f, 1.0f}, 0, 4);
         shaderProgram.setUniformf("u_upem", hbFont.upem());
-        shaderProgram.setUniformf("u_fontSize", 64);
+        shaderProgram.setUniformf("u_fontSize", 32 * scale);
 
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFuncSeparate(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA, GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
@@ -133,7 +144,7 @@ public class Main extends ApplicationAdapter {
 
     @Override
     public void resize(int width, int height) {
-        viewport.update(width, height,true);
+        viewport.update(width, height, true);
     }
 
     @Override

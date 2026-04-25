@@ -7,17 +7,17 @@ import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.utils.Disposable;
 
 public class GlyphMesh implements Disposable {
+    private static final float[] vertices = {
+        0, 0,
+        1, 0,
+        1, 1,
+        0, 0,
+        1, 1,
+        0, 1,
+    };
     private final Mesh mesh;
 
     public GlyphMesh() {
-        float[] vertices = {
-            0, 0,
-            1, 0,
-            1, 1,
-            0, 0,
-            1, 1,
-            0, 1,
-        };
         mesh = new Mesh(
             true,
             6,
