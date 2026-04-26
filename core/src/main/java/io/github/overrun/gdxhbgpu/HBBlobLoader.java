@@ -19,6 +19,10 @@ public class HBBlobLoader extends AsynchronousAssetLoader<HBBlob, HBBlobLoaderPa
         super(resolver);
     }
 
+    public static void register(AssetManager assetManager) {
+        assetManager.setLoader(HBBlob.class, new HBBlobLoader(assetManager.getFileHandleResolver()));
+    }
+
     ByteBuffer data;
 
     @Override
