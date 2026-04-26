@@ -2,12 +2,17 @@ package io.github.overrun.gdxhbgpu.demo;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.InputAdapter;
+import com.badlogic.gdx.InputProcessor;
 import com.badlogic.gdx.assets.AssetManager;
+import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Graphics;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.utils.ScreenUtils;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
+import imgui.ImGui;
+import imgui.ImGuiIO;
+import imgui.gl3.ImGuiImplGl3;
+import imgui.glfw.ImGuiImplGlfw;
 import io.github.overrun.gdxhbgpu.HBBlob;
 import io.github.overrun.gdxhbgpu.HBBlobLoader;
 import io.github.overrun.gdxhbgpu.HBFont;
@@ -20,19 +25,59 @@ public class Main extends ApplicationAdapter {
     private SpriteBatch spriteBatch;
     private HBTextRenderer textRenderer;
     private final ScreenViewport viewport = new ScreenViewport();
-    private float scale = 1;
+    private final float[] scale = {1};
+
+    private static ImGuiImplGlfw imGuiGlfw;
+    private static ImGuiImplGl3 imGuiGl3;
+
+    private static InputProcessor tmpProcessor;
+
+    public static void initImGui() {
+        imGuiGlfw = new ImGuiImplGlfw();
+        imGuiGl3 = new ImGuiImplGl3();
+        long windowHandle = ((Lwjgl3Graphics) Gdx.graphics).getWindow().getWindowHandle();
+        ImGui.createContext();
+        ImGuiIO io = ImGui.getIO();
+        io.setIniFilename(null); //Optional. Disables saving window layouts between sessions
+        io.getFonts().addFontDefault();
+        io.getFonts().build();
+        imGuiGlfw.init(windowHandle, true);
+        imGuiGl3.init("#version 150");
+    }
+
+    public static void startImGui() {
+        if (tmpProcessor != null) { // Restore the input processor after ImGui caught all inputs, see #end()
+            Gdx.input.setInputProcessor(tmpProcessor);
+            tmpProcessor = null;
+        }
+
+        imGuiGl3.newFrame();
+        imGuiGlfw.newFrame();
+        ImGui.newFrame();
+    }
+
+    public static void endImGui() {
+        ImGui.render();
+        imGuiGl3.renderDrawData(ImGui.getDrawData());
+
+        // If ImGui wants to capture the input, disable libGDX's input processor
+        if (ImGui.getIO().getWantCaptureKeyboard() || ImGui.getIO().getWantCaptureMouse()) {
+            tmpProcessor = Gdx.input.getInputProcessor();
+            Gdx.input.setInputProcessor(null);
+        }
+    }
+
+    public static void disposeImGui() {
+        imGuiGl3.shutdown();
+        imGuiGl3 = null;
+        imGuiGlfw.shutdown();
+        imGuiGlfw = null;
+        ImGui.destroyContext();
+    }
 
     @Override
     public void create() {
         Gdx.graphics.setForegroundFPS(0);
-        Gdx.input.setInputProcessor(new InputAdapter() {
-            @Override
-            public boolean scrolled(float amountX, float amountY) {
-                scale -= amountY * 0.1f;
-                if (scale < 0) scale = 0;
-                return true;
-            }
-        });
 
         assetManager = new AssetManager();
         HBBlobLoader.register(assetManager);
@@ -44,6 +89,8 @@ public class Main extends ApplicationAdapter {
 
         spriteBatch = new SpriteBatch();
         textRenderer = new HBTextRenderer(hbFont);
+
+        initImGui();
     }
 
     @Override
@@ -52,7 +99,7 @@ public class Main extends ApplicationAdapter {
         int height = Gdx.graphics.getHeight();
         ScreenUtils.clear(Color.CLEAR);
 
-        float fontSize = 32 * scale;
+        float fontSize = 32 * scale[0];
         float lineHeight = hbFont.getLineHeight(fontSize);
         float descender = hbFont.unitsToPixels(hbFont.hDescender(), fontSize);
 
@@ -60,12 +107,16 @@ public class Main extends ApplicationAdapter {
         spriteBatch.setProjectionMatrix(viewport.getCamera().combined);
         spriteBatch.begin();
         textRenderer.drawText(spriteBatch, "FPS: " + Gdx.graphics.getFramesPerSecond(), 0, height - lineHeight, fontSize, Color.GREEN);
-        textRenderer.drawText(spriteBatch, "Scale: " + scale, 0, height - 2 * lineHeight, fontSize, Color.YELLOW);
+        textRenderer.drawText(spriteBatch, "Scale: " + scale[0], 0, height - 2 * lineHeight, fontSize, Color.YELLOW);
         textRenderer.drawMultilineText(spriteBatch, "多行文本测试 Multiline text test\n" +
             "第一行 Line 1\n" +
             "第二行 Line 2", 0, height - 3 * lineHeight, fontSize);
         textRenderer.drawWrappedText(spriteBatch, "天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。The quick brown fox jumps over the lazy dog.", 0, -descender, fontSize, width, true);
         spriteBatch.end();
+
+        startImGui();
+        ImGui.sliderFloat("Scale", scale, 0, 3);
+        endImGui();
     }
 
     @Override
@@ -79,5 +130,6 @@ public class Main extends ApplicationAdapter {
         assetManager.dispose();
         spriteBatch.dispose();
         textRenderer.dispose();
+        disposeImGui();
     }
 }

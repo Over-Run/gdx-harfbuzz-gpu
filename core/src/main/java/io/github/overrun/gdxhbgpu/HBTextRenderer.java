@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 import static org.lwjgl.system.MemoryUtil.*;
 import static org.lwjgl.util.harfbuzz.HarfBuzz.*;
@@ -41,6 +42,7 @@ public class HBTextRenderer implements Disposable {
         1, 1,
         0, 1,
     };
+    private static final Pattern LINE_SEP_PATTERN = Pattern.compile("\\R");
     private final HBFont font;
     private final long hbBuffer;
     private final GlyphCache glyphCache;
@@ -110,59 +112,115 @@ public class HBTextRenderer implements Disposable {
         return shaderProgram;
     }
 
-    // TODO: maybe HBShaper?
-    private float getStringWidth(String text, float fontSize) {
-        if (text.isEmpty()) return 0;
-        hb_buffer_reset(hbBuffer);
-        hb_buffer_add_utf8(hbBuffer, text, 0, -1);
-        hb_buffer_set_direction(hbBuffer, HB_DIRECTION_LTR);
-        hb_buffer_set_script(hbBuffer, HB_SCRIPT_COMMON);
-        hb_buffer_set_language(hbBuffer, hb_language_from_string("en"));
-
-        hb_shape(font.font(), hbBuffer, null);
-
-        int glyphCount = hb_buffer_get_length(hbBuffer);
-        if (glyphCount == 0) return 0;
-
-        hb_glyph_position_t.Buffer glyphPositions = Objects.requireNonNull(hb_buffer_get_glyph_positions(hbBuffer));
-        float width = 0;
-        float scale = fontSize / font.upem();
-        for (int i = 0; i < glyphCount; i++) {
-            width += glyphPositions.get(i).x_advance() * scale;
-        }
-        return width;
+    private static boolean isCJKCodePoint(int codePoint) {
+        Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+        return script == Character.UnicodeScript.HAN ||
+            script == Character.UnicodeScript.HIRAGANA ||
+            script == Character.UnicodeScript.KATAKANA ||
+            script == Character.UnicodeScript.HANGUL ||
+            script == Character.UnicodeScript.BOPOMOFO ||
+            (codePoint >= 0x3000 && codePoint <= 0x303F) || // CJK punctuation symbols
+            (codePoint >= 0xFF00 && codePoint <= 0xFFEF) || // Fullwidth characters
+            (codePoint >= 0x2E80 && codePoint <= 0x2FDF);   // CJK radicals supplement
     }
+
+    // TODO: maybe HBShaper?
 
     private List<String> wrapText(String text, float maxWidth, float fontSize) {
         List<String> lines = new ArrayList<>();
-        String[] words = text.split(" ");
-        StringBuilder line = new StringBuilder();
 
-        for (String word : words) {
-            String testLine = line.length() == 0 ? word : line + word;
-            float testWidth = getStringWidth(testLine, fontSize);
+        hb_buffer_reset(hbBuffer);
+        hb_buffer_add_utf16(hbBuffer, text, 0, -1);
+        hb_buffer_set_direction(hbBuffer, HB_DIRECTION_LTR);
+        hb_buffer_set_script(hbBuffer, HB_SCRIPT_COMMON);
+        hb_buffer_set_language(hbBuffer, hb_language_from_string("en"));
+        hb_shape(font.font(), hbBuffer, null);
 
-            if (testWidth > maxWidth && line.length() > 0) {
-                lines.add(line.toString());
-                line = new StringBuilder(word);
-            } else {
-                if (line.length() > 0) {
-                    line.append(' ');
-                }
-                line.append(word);
+        int glyphCount = hb_buffer_get_length(hbBuffer);
+        if (glyphCount == 0) return lines;
+
+        hb_glyph_info_t.Buffer glyphInfos = Objects.requireNonNull(hb_buffer_get_glyph_infos(hbBuffer));
+        hb_glyph_position_t.Buffer glyphPositions = Objects.requireNonNull(hb_buffer_get_glyph_positions(hbBuffer));
+
+        float scale = fontSize / font.upem();
+
+        StringBuilder lineText = new StringBuilder();
+        StringBuilder wordText = new StringBuilder();
+        float lineWidth = 0;
+        float wordWidth = 0;
+        int lastCluster = -1;
+
+        for (int i = 0; i < glyphCount; i++) {
+            int cluster = glyphInfos.get(i).cluster();
+            float advance = glyphPositions.get(i).x_advance() * scale;
+
+            if (cluster <= lastCluster) {
+                lineWidth += advance;
+                wordWidth += advance;
+                continue;
             }
+
+            int cp = text.codePointAt(cluster);
+
+            // line separator
+            if (cp == '\n') {
+                if (lineText.length() > 0) lines.add(lineText.toString());
+                lineText.setLength(0);
+                lineWidth = 0;
+                lastCluster = cluster + Character.charCount(cp) - 1;
+                continue;
+            }
+
+            boolean isSpace = Character.isWhitespace(cp);
+            boolean isCJK = isCJKCodePoint(cp);
+
+            if (isSpace || isCJK) {
+                if (wordText.length() > 0) {
+                    if (lineWidth + wordWidth > maxWidth && lineText.length() > 0) {
+                        lines.add(lineText.toString());
+                        lineText.setLength(0);
+                        lineWidth = 0;
+                    }
+                    lineText.append(wordText);
+                    lineWidth += wordWidth;
+                    wordText.setLength(0);
+                    wordWidth = 0;
+                }
+                if (lineWidth + advance > maxWidth && lineText.length() > 0) {
+                    lines.add(lineText.toString());
+                    lineText.setLength(0);
+                    lineWidth = 0;
+                }
+                lineText.appendCodePoint(cp);
+                lineWidth += advance;
+                lastCluster = cluster;
+                continue;
+            }
+
+            wordText.appendCodePoint(cp);
+            wordWidth += advance;
+            lastCluster = cluster;
         }
 
-        if (line.length() > 0) {
-            lines.add(line.toString());
+        if (wordText.length() > 0) {
+            if (lineWidth + wordWidth > maxWidth && lineText.length() > 0) {
+                lines.add(lineText.toString());
+                lineText.setLength(0);
+            }
+            lineText.append(wordText);
         }
+        if (lineText.length() > 0) {
+            lines.add(lineText.toString());
+        }
+
         return lines;
     }
 
     public void drawWrappedText(Batch batch, String text, float x, float y, float fontSize, float maxWidth, boolean baseFirstLine) {
         if (text.isEmpty()) return;
         float lineHeight = font.getLineHeight(fontSize);
-        List<String> list = wrapText(text, maxWidth, fontSize);
+        String normalized = LINE_SEP_PATTERN.matcher(text).replaceAll("\n");
+        List<String> list = wrapText(normalized, maxWidth, fontSize);
         if (baseFirstLine) {
             y += (list.size() - 1) * lineHeight;
         }
