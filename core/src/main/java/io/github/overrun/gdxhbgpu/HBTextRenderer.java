@@ -9,6 +9,8 @@ import org.lwjgl.util.harfbuzz.hb_glyph_info_t;
 import org.lwjgl.util.harfbuzz.hb_glyph_position_t;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 import static org.lwjgl.system.MemoryUtil.*;
@@ -108,11 +110,85 @@ public class HBTextRenderer implements Disposable {
         return shaderProgram;
     }
 
+    // TODO: maybe HBShaper?
+    private float getStringWidth(String text, float fontSize) {
+        if (text.isEmpty()) return 0;
+        hb_buffer_reset(hbBuffer);
+        hb_buffer_add_utf8(hbBuffer, text, 0, -1);
+        hb_buffer_set_direction(hbBuffer, HB_DIRECTION_LTR);
+        hb_buffer_set_script(hbBuffer, HB_SCRIPT_COMMON);
+        hb_buffer_set_language(hbBuffer, hb_language_from_string("en"));
+
+        hb_shape(font.font(), hbBuffer, null);
+
+        int glyphCount = hb_buffer_get_length(hbBuffer);
+        if (glyphCount == 0) return 0;
+
+        hb_glyph_position_t.Buffer glyphPositions = Objects.requireNonNull(hb_buffer_get_glyph_positions(hbBuffer));
+        float width = 0;
+        float scale = fontSize / font.upem();
+        for (int i = 0; i < glyphCount; i++) {
+            width += glyphPositions.get(i).x_advance() * scale;
+        }
+        return width;
+    }
+
+    private List<String> wrapText(String text, float maxWidth, float fontSize) {
+        List<String> lines = new ArrayList<>();
+        String[] words = text.split(" ");
+        StringBuilder line = new StringBuilder();
+
+        for (String word : words) {
+            String testLine = line.length() == 0 ? word : line + word;
+            float testWidth = getStringWidth(testLine, fontSize);
+
+            if (testWidth > maxWidth && line.length() > 0) {
+                lines.add(line.toString());
+                line = new StringBuilder(word);
+            } else {
+                if (line.length() > 0) {
+                    line.append(' ');
+                }
+                line.append(word);
+            }
+        }
+
+        if (line.length() > 0) {
+            lines.add(line.toString());
+        }
+        return lines;
+    }
+
+    public void drawWrappedText(Batch batch, String text, float x, float y, float fontSize, float maxWidth, boolean baseFirstLine) {
+        if (text.isEmpty()) return;
+        float lineHeight = font.getLineHeight(fontSize);
+        List<String> list = wrapText(text, maxWidth, fontSize);
+        if (baseFirstLine) {
+            y += (list.size() - 1) * lineHeight;
+        }
+        for (String s : list) {
+            drawText(batch, s, x, y, fontSize);
+            y -= lineHeight;
+        }
+    }
+
+    public void drawMultilineText(Batch batch, String text, float x, float y, float fontSize) {
+        String[] lines = text.split("\\R");
+        float lineHeight = font.getLineHeight(fontSize);
+        for (String line : lines) {
+            if (line.isEmpty()) {
+                y -= lineHeight;
+                continue;
+            }
+            drawText(batch, line, x, y, fontSize);
+            y -= lineHeight;
+        }
+    }
+
     public void drawText(Batch batch, String text, float x, float y, float fontSize) {
         drawText(batch, text, x, y, fontSize, Color.WHITE);
     }
 
-    // TODO: multiline text
     public void drawText(Batch batch, String text, float x, float y, float fontSize, Color color) {
         if (text.isEmpty()) return;
 

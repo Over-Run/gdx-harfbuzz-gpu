@@ -6,24 +6,18 @@ class GlyphEntry {
     public final int yBearing;
     public final int width;
     public final int height;
-    public final int hAdvance;
-    public final int vAdvance;
 
     public GlyphEntry(
         int glyphLoc,
         int xBearing,
         int yBearing,
         int width,
-        int height,
-        int hAdvance,
-        int vAdvance
+        int height
     ) {
         this.glyphLoc = glyphLoc;
         this.xBearing = xBearing;
         this.yBearing = yBearing;
         this.width = width;
         this.height = height;
-        this.hAdvance = hAdvance;
-        this.vAdvance = vAdvance;
     }
 }

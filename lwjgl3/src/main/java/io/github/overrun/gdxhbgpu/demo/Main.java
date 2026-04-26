@@ -29,6 +29,7 @@ public class Main extends ApplicationAdapter {
             @Override
             public boolean scrolled(float amountX, float amountY) {
                 scale -= amountY * 0.1f;
+                if (scale < 0) scale = 0;
                 return true;
             }
         });
@@ -47,13 +48,23 @@ public class Main extends ApplicationAdapter {
 
     @Override
     public void render() {
+        int width = Gdx.graphics.getWidth();
+        int height = Gdx.graphics.getHeight();
         ScreenUtils.clear(Color.CLEAR);
+
+        float fontSize = 32 * scale;
+        float lineHeight = hbFont.getLineHeight(fontSize);
+        float descender = hbFont.unitsToPixels(hbFont.hDescender(), fontSize);
 
         viewport.apply();
         spriteBatch.setProjectionMatrix(viewport.getCamera().combined);
         spriteBatch.begin();
-        textRenderer.drawText(spriteBatch, "你好世界！The quick brown fox jumps over the lazy dog.", 0, 32, 32 * scale);
-        textRenderer.drawText(spriteBatch, "FPS: " + Gdx.graphics.getFramesPerSecond(), 0, Gdx.graphics.getHeight() - 32, 32);
+        textRenderer.drawText(spriteBatch, "FPS: " + Gdx.graphics.getFramesPerSecond(), 0, height - lineHeight, fontSize, Color.GREEN);
+        textRenderer.drawText(spriteBatch, "Scale: " + scale, 0, height - 2 * lineHeight, fontSize, Color.YELLOW);
+        textRenderer.drawMultilineText(spriteBatch, "多行文本测试 Multiline text test\n" +
+            "第一行 Line 1\n" +
+            "第二行 Line 2", 0, height - 3 * lineHeight, fontSize);
+        textRenderer.drawWrappedText(spriteBatch, "天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。The quick brown fox jumps over the lazy dog.", 0, -descender, fontSize, width, true);
         spriteBatch.end();
     }
 

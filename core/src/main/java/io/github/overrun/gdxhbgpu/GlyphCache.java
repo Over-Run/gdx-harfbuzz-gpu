@@ -17,7 +17,7 @@ class GlyphCache implements Disposable {
     private final long font;
     private final long drawEncoder;
     private int glTextureBuffer;
-    private int glTexture;
+    private final int glTexture;
     private int capacity;
     private int nextGlyphLoc;
     private final IntMap<GlyphEntry> glyphEntryMap = new IntMap<>();
@@ -68,17 +68,13 @@ class GlyphCache implements Disposable {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             hb_glyph_extents_t extents = hb_glyph_extents_t.malloc(stack);
             hb_gpu_draw_get_extents(drawEncoder, extents);
-            int hAdvance = hb_font_get_glyph_h_advance(font, glyphId);
-            int vAdvance = hb_font_get_glyph_v_advance(font, glyphId);
 
             glyphEntry = new GlyphEntry(
                 nextGlyphLoc,
                 extents.x_bearing(),
                 extents.y_bearing(),
                 extents.width(),
-                extents.height(),
-                hAdvance,
-                vAdvance
+                extents.height()
             );
         }
 
