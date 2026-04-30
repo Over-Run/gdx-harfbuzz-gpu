@@ -21,6 +21,7 @@ import io.github.fourlastor.construo.Target
 sourceSets.main.resources.srcDirs += [ rootProject.file('assets').path ]
 application.mainClass = 'io.github.overrun.gdxhbgpu.demo.Lwjgl3Launcher'
 application.applicationName = appName
+application.applicationDefaultJvmArgs = ["-Dsun.stdout.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8"]
 eclipse.project.name = appName + '-lwjgl3'
 java.sourceCompatibility = 8
 java.targetCompatibility = 8

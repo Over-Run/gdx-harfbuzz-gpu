@@ -13,10 +13,7 @@ import imgui.ImGui;
 import imgui.ImGuiIO;
 import imgui.gl3.ImGuiImplGl3;
 import imgui.glfw.ImGuiImplGlfw;
-import io.github.overrun.gdxhbgpu.HBBlob;
-import io.github.overrun.gdxhbgpu.HBBlobLoader;
-import io.github.overrun.gdxhbgpu.HBFont;
-import io.github.overrun.gdxhbgpu.HBTextRenderer;
+import io.github.overrun.gdxhbgpu.*;
 
 public class Main extends ApplicationAdapter {
     private AssetManager assetManager;
@@ -26,6 +23,7 @@ public class Main extends ApplicationAdapter {
     private HBTextRenderer textRenderer;
     private final ScreenViewport viewport = new ScreenViewport();
     private final float[] scale = {1};
+    private HBLayout layout;
 
     private static ImGuiImplGlfw imGuiGlfw;
     private static ImGuiImplGl3 imGuiGl3;
@@ -90,6 +88,12 @@ public class Main extends ApplicationAdapter {
         spriteBatch = new SpriteBatch();
         textRenderer = new HBTextRenderer(hbFont);
 
+        layout = new HBLayout(
+            hbFont,
+            "天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。The quick brown fox jumps over the lazy dog.",
+            32
+        );
+
         initImGui();
     }
 
@@ -106,12 +110,18 @@ public class Main extends ApplicationAdapter {
         viewport.apply();
         spriteBatch.setProjectionMatrix(viewport.getCamera().combined);
         spriteBatch.begin();
-        textRenderer.drawText(spriteBatch, "FPS: " + Gdx.graphics.getFramesPerSecond(), 0, height - lineHeight, fontSize, Color.GREEN);
-        textRenderer.drawText(spriteBatch, "Scale: " + scale[0], 0, height - 2 * lineHeight, fontSize, Color.YELLOW);
-        textRenderer.drawMultilineText(spriteBatch, "多行文本测试 Multiline text test\n" +
+        textRenderer.setColor(Color.GREEN);
+        textRenderer.drawText(spriteBatch, "FPS: " + Gdx.graphics.getFramesPerSecond(), 0, height - lineHeight, fontSize);
+        textRenderer.setColor(Color.YELLOW);
+        textRenderer.drawText(spriteBatch, "Scale: " + scale[0], 0, height - 2 * lineHeight, fontSize);
+        textRenderer.setColor(Color.WHITE);
+        textRenderer.drawText(spriteBatch, "多行文本测试 Multiline text test\n" +
+            "\n" +
             "第一行 Line 1\n" +
             "第二行 Line 2", 0, height - 3 * lineHeight, fontSize);
-        textRenderer.drawWrappedText(spriteBatch, "天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。The quick brown fox jumps over the lazy dog.", 0, -descender, fontSize, width, true);
+        layout.setFontSize(fontSize);
+        layout.setMaxWidth(width);
+        textRenderer.drawLayout(spriteBatch, layout, 0, -descender, false);
         spriteBatch.end();
 
         startImGui();

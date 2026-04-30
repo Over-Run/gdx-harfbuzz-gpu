@@ -51,7 +51,20 @@ class GlyphCache implements Disposable {
 
     private GlyphEntry encodeAndUpload(int glyphId) {
         hb_gpu_draw_glyph(drawEncoder, font, glyphId);
-        long blob = hb_gpu_draw_encode(drawEncoder);
+
+        long blob;
+        GlyphEntry glyphEntry;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            hb_glyph_extents_t extents = hb_glyph_extents_t.malloc(stack);
+            blob = hb_gpu_draw_encode(drawEncoder, extents);
+            glyphEntry = new GlyphEntry(
+                nextGlyphLoc,
+                extents.x_bearing(),
+                extents.y_bearing(),
+                extents.width(),
+                extents.height()
+            );
+        }
         int length = hb_blob_get_length(blob);
 
         int requiredTexels = length / 8;
@@ -64,24 +77,9 @@ class GlyphCache implements Disposable {
             Gdx.gl.glBufferSubData(GL32.GL_TEXTURE_BUFFER, nextGlyphLoc * 8, length, hb_blob_get_data(blob));
         }
 
-        GlyphEntry glyphEntry;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            hb_glyph_extents_t extents = hb_glyph_extents_t.malloc(stack);
-            hb_gpu_draw_get_extents(drawEncoder, extents);
-
-            glyphEntry = new GlyphEntry(
-                nextGlyphLoc,
-                extents.x_bearing(),
-                extents.y_bearing(),
-                extents.width(),
-                extents.height()
-            );
-        }
-
         nextGlyphLoc += requiredTexels;
 
         hb_gpu_draw_recycle_blob(drawEncoder, blob);
-        hb_gpu_draw_reset(drawEncoder);
 
         return glyphEntry;
     }

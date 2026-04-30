@@ -19,6 +19,8 @@ dependencies {
   implementation("org.lwjgl:lwjgl-harfbuzz::natives-macos-arm64")
   implementation("org.lwjgl:lwjgl-harfbuzz::natives-windows")
   implementation("org.lwjgl:lwjgl-harfbuzz::natives-windows-x86")
+
+  implementation("com.ibm.icu:icu4j:78.3")
 }
 
 jar {

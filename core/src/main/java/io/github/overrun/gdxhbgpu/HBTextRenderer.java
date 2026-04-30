@@ -4,18 +4,14 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.*;
 import com.badlogic.gdx.graphics.g2d.Batch;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
+import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Disposable;
-import org.lwjgl.util.harfbuzz.hb_glyph_info_t;
-import org.lwjgl.util.harfbuzz.hb_glyph_position_t;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.regex.Pattern;
 
 import static org.lwjgl.system.MemoryUtil.*;
-import static org.lwjgl.util.harfbuzz.HarfBuzz.*;
+import static org.lwjgl.util.harfbuzz.HarfBuzz.hb_buffer_create;
+import static org.lwjgl.util.harfbuzz.HarfBuzz.hb_buffer_destroy;
 import static org.lwjgl.util.harfbuzz.HarfBuzzGPU.*;
 
 public class HBTextRenderer implements Disposable {
@@ -42,7 +38,6 @@ public class HBTextRenderer implements Disposable {
         1, 1,
         0, 1,
     };
-    private static final Pattern LINE_SEP_PATTERN = Pattern.compile("\\R");
     private final HBFont font;
     private final long hbBuffer;
     private final GlyphCache glyphCache;
@@ -50,8 +45,10 @@ public class HBTextRenderer implements Disposable {
     private final Mesh mesh;
     private final int glyphVbo;
     private ByteBuffer glyphBuffer;
-    private int bufferCapacity = 128;
+    private int bufferCapacity = 1024;
     private boolean bufferResized = true;
+    private final float[] color = {1, 1, 1, 1};
+    private final HBLayout layout;
 
     public HBTextRenderer(HBFont font) {
         this.font = font;
@@ -67,16 +64,25 @@ public class HBTextRenderer implements Disposable {
             new VertexAttribute(VertexAttributes.Usage.TextureCoordinates, 2, ShaderProgram.TEXCOORD_ATTRIBUTE)
         );
         mesh.setVertices(vertices);
+
+        shader.bind();
+        shader.setUniformf("u_upem", font.upem());
+        shader.setUniformi("hb_gpu_atlas", 0);
+
+        layout = new HBLayout(font, null, 0);
     }
 
     private static final class ShaderSource {
-        static final String VERTEX = hb_gpu_shader_vertex_source(HB_GPU_SHADER_LANG_GLSL);
-        static final String FRAGMENT = hb_gpu_shader_fragment_source(HB_GPU_SHADER_LANG_GLSL);
+        static final String VERTEX = hb_gpu_shader_source(HB_GPU_SHADER_STAGE_VERTEX, HB_GPU_SHADER_LANG_GLSL);
+        static final String FRAGMENT = hb_gpu_shader_source(HB_GPU_SHADER_STAGE_FRAGMENT, HB_GPU_SHADER_LANG_GLSL);
+        static final String VERTEX_DRAW = hb_gpu_draw_shader_source(HB_GPU_SHADER_STAGE_VERTEX, HB_GPU_SHADER_LANG_GLSL);
+        static final String FRAGMENT_DRAW = hb_gpu_draw_shader_source(HB_GPU_SHADER_STAGE_FRAGMENT, HB_GPU_SHADER_LANG_GLSL);
     }
 
     public static ShaderProgram createShader() {
         String vertexShader = "#version 330 core\n" +
             ShaderSource.VERTEX + "\n" +
+            ShaderSource.VERTEX_DRAW + "\n" +
             "in vec2 " + ShaderProgram.TEXCOORD_ATTRIBUTE + ";\n" +
             "in uint a_glyphLoc;\n" +
             "in vec2 a_glyphPos;\n" +
@@ -94,15 +100,15 @@ public class HBTextRenderer implements Disposable {
             "    vec2 pixelPos = a_glyphPos + upemCoord * (u_fontSize / u_upem);\n" +
             "    gl_Position =  u_projTrans * vec4(pixelPos, 0.0, 1.0);\n" +
             "}";
-        // TODO: in upstream hb_gpu_render is renamed to hb_gpu_draw
         String fragmentShader = "#version 330 core\n" +
             ShaderSource.FRAGMENT + "\n" +
+            ShaderSource.FRAGMENT_DRAW + "\n" +
             "in vec2 v_renderCoord;\n" +
             "flat in uint v_glyphLoc;\n" +
             "out vec4 FragColor;\n" +
             "uniform vec4 u_color;\n" +
             "void main() {\n" +
-            "    float coverage = hb_gpu_render(v_renderCoord, v_glyphLoc);\n" +
+            "    float coverage = hb_gpu_draw(v_renderCoord, v_glyphLoc);\n" +
             "    FragColor = vec4(u_color.rgb, u_color.a * coverage);\n" +
             "}";
         ShaderProgram shaderProgram = new ShaderProgram(vertexShader, fragmentShader);
@@ -112,210 +118,93 @@ public class HBTextRenderer implements Disposable {
         return shaderProgram;
     }
 
-    private static boolean isCJKCodePoint(int codePoint) {
-        Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
-        return script == Character.UnicodeScript.HAN ||
-            script == Character.UnicodeScript.HIRAGANA ||
-            script == Character.UnicodeScript.KATAKANA ||
-            script == Character.UnicodeScript.HANGUL ||
-            script == Character.UnicodeScript.BOPOMOFO ||
-            (codePoint >= 0x3000 && codePoint <= 0x303F) || // CJK punctuation symbols
-            (codePoint >= 0xFF00 && codePoint <= 0xFFEF) || // Fullwidth characters
-            (codePoint >= 0x2E80 && codePoint <= 0x2FDF);   // CJK radicals supplement
-    }
-
-    // TODO: maybe HBShaper?
-
-    private List<String> wrapText(String text, float maxWidth, float fontSize) {
-        List<String> lines = new ArrayList<>();
-
-        hb_buffer_reset(hbBuffer);
-        hb_buffer_add_utf16(hbBuffer, text, 0, -1);
-        hb_buffer_set_direction(hbBuffer, HB_DIRECTION_LTR);
-        hb_buffer_set_script(hbBuffer, HB_SCRIPT_COMMON);
-        hb_buffer_set_language(hbBuffer, hb_language_from_string("en"));
-        hb_shape(font.font(), hbBuffer, null);
-
-        int glyphCount = hb_buffer_get_length(hbBuffer);
-        if (glyphCount == 0) return lines;
-
-        hb_glyph_info_t.Buffer glyphInfos = Objects.requireNonNull(hb_buffer_get_glyph_infos(hbBuffer));
-        hb_glyph_position_t.Buffer glyphPositions = Objects.requireNonNull(hb_buffer_get_glyph_positions(hbBuffer));
-
-        float scale = fontSize / font.upem();
-
-        StringBuilder lineText = new StringBuilder();
-        StringBuilder wordText = new StringBuilder();
-        float lineWidth = 0;
-        float wordWidth = 0;
-        int lastCluster = -1;
-
-        for (int i = 0; i < glyphCount; i++) {
-            int cluster = glyphInfos.get(i).cluster();
-            float advance = glyphPositions.get(i).x_advance() * scale;
-
-            if (cluster <= lastCluster) {
-                lineWidth += advance;
-                wordWidth += advance;
-                continue;
-            }
-
-            int cp = text.codePointAt(cluster);
-
-            // line separator
-            if (cp == '\n') {
-                if (lineText.length() > 0) lines.add(lineText.toString());
-                lineText.setLength(0);
-                lineWidth = 0;
-                lastCluster = cluster + Character.charCount(cp) - 1;
-                continue;
-            }
-
-            boolean isSpace = Character.isWhitespace(cp);
-            boolean isCJK = isCJKCodePoint(cp);
-
-            if (isSpace || isCJK) {
-                if (wordText.length() > 0) {
-                    if (lineWidth + wordWidth > maxWidth && lineText.length() > 0) {
-                        lines.add(lineText.toString());
-                        lineText.setLength(0);
-                        lineWidth = 0;
-                    }
-                    lineText.append(wordText);
-                    lineWidth += wordWidth;
-                    wordText.setLength(0);
-                    wordWidth = 0;
-                }
-                if (lineWidth + advance > maxWidth && lineText.length() > 0) {
-                    lines.add(lineText.toString());
-                    lineText.setLength(0);
-                    lineWidth = 0;
-                }
-                lineText.appendCodePoint(cp);
-                lineWidth += advance;
-                lastCluster = cluster;
-                continue;
-            }
-
-            wordText.appendCodePoint(cp);
-            wordWidth += advance;
-            lastCluster = cluster;
-        }
-
-        if (wordText.length() > 0) {
-            if (lineWidth + wordWidth > maxWidth && lineText.length() > 0) {
-                lines.add(lineText.toString());
-                lineText.setLength(0);
-            }
-            lineText.append(wordText);
-        }
-        if (lineText.length() > 0) {
-            lines.add(lineText.toString());
-        }
-
-        return lines;
-    }
-
-    public void drawWrappedText(Batch batch, String text, float x, float y, float fontSize, float maxWidth, boolean baseFirstLine) {
-        if (text.isEmpty()) return;
-        float lineHeight = font.getLineHeight(fontSize);
-        String normalized = LINE_SEP_PATTERN.matcher(text).replaceAll("\n");
-        List<String> list = wrapText(normalized, maxWidth, fontSize);
-        if (baseFirstLine) {
-            y += (list.size() - 1) * lineHeight;
-        }
-        for (String s : list) {
-            drawText(batch, s, x, y, fontSize);
-            y -= lineHeight;
-        }
-    }
-
-    public void drawMultilineText(Batch batch, String text, float x, float y, float fontSize) {
-        String[] lines = text.split("\\R");
-        float lineHeight = font.getLineHeight(fontSize);
-        for (String line : lines) {
-            if (line.isEmpty()) {
-                y -= lineHeight;
-                continue;
-            }
-            drawText(batch, line, x, y, fontSize);
-            y -= lineHeight;
-        }
-    }
-
     public void drawText(Batch batch, String text, float x, float y, float fontSize) {
-        drawText(batch, text, x, y, fontSize, Color.WHITE);
+        drawText(batch, text, x, y, fontSize, 0);
     }
 
-    public void drawText(Batch batch, String text, float x, float y, float fontSize, Color color) {
+    public void drawText(Batch batch, String text, float x, float y, float fontSize, float maxWidth) {
+        drawText(batch, text, x, y, fontSize, maxWidth, Align.left);
+    }
+
+    public void drawText(Batch batch, String text, float x, float y, float fontSize, float maxWidth, int alignment) {
         if (text.isEmpty()) return;
 
-        hb_buffer_reset(hbBuffer);
-        hb_buffer_add_utf8(hbBuffer, text, 0, -1);
-        hb_buffer_set_direction(hbBuffer, HB_DIRECTION_LTR);
-        hb_buffer_set_script(hbBuffer, HB_SCRIPT_COMMON);
-        hb_buffer_set_language(hbBuffer, hb_language_from_string("en"));
+        layout.setText(text);
+        layout.setFontSize(fontSize);
+        layout.setMaxWidth(maxWidth);
+        layout.setAlignment(alignment);
+        drawLayout(batch, layout, x, y, true);
+    }
 
-        hb_shape(font.font(), hbBuffer, null);
-
-        int glyphCount = hb_buffer_get_length(hbBuffer);
-        if (glyphCount == 0) {
-            return;
-        }
-
-        hb_glyph_info_t.Buffer glyphInfos = Objects.requireNonNull(hb_buffer_get_glyph_infos(hbBuffer));
-        hb_glyph_position_t.Buffer glyphPositions = Objects.requireNonNull(hb_buffer_get_glyph_positions(hbBuffer));
-
-        ensureBufferCapacity(glyphCount);
-        glyphBuffer.clear();
-
-        float scale = fontSize / font.upem();
-        float currentX = x;
-        float currentY = y;
-        for (int i = 0; i < glyphCount; i++) {
-            int glyphId = glyphInfos.get(i).codepoint();
-            hb_glyph_position_t glyphPosition = glyphPositions.get(i);
-            GlyphEntry g = glyphCache.getOrCreate(glyphId);
-
-            float pxOffX = glyphPosition.x_offset() * scale;
-            float pxOffY = glyphPosition.y_offset() * scale;
-
-            glyphBuffer.putInt(g.glyphLoc)
-                .putFloat(currentX + pxOffX)
-                .putFloat(currentY + pxOffY)
-                .putFloat(g.xBearing)
-                .putFloat(g.yBearing)
-                .putFloat(g.width)
-                .putFloat(g.height);
-
-            currentX += glyphPosition.x_advance() * scale;
-            currentY += glyphPosition.y_advance() * scale;
-        }
-
-        glyphBuffer.flip();
+    public void drawLayout(Batch batch, HBLayout layout, float x, float y, boolean baselineOnFirstLine) {
+        layout.buildIfNeeded();
 
         ShaderProgram oldShader = batch.getShader();
         batch.flush();
 
         shader.bind();
         shader.setUniformMatrix("u_projTrans", batch.getProjectionMatrix());
-        shader.setUniform4fv("u_color", new float[]{color.r, color.g, color.b, color.a}, 0, 4);
-        shader.setUniformf("u_upem", font.upem());
-        shader.setUniformf("u_fontSize", fontSize);
+        shader.setUniform4fv("u_color", this.color, 0, 4);
+        shader.setUniformf("u_fontSize", layout.fontSize());
 
         Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
         Gdx.gl.glBindTexture(GL32.GL_TEXTURE_BUFFER, glyphCache.glTexture());
-        shader.setUniformi("hb_gpu_atlas", 0);
 
+        boolean isBlending = Gdx.gl.glIsEnabled(GL20.GL_BLEND);
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFuncSeparate(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA, GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         mesh.bind(shader);
-        uploadInstanceData();
-        Gdx.gl30.glDrawArraysInstanced(GL20.GL_TRIANGLES, 0, 6, glyphCount);
+
+        float lineHeight = font.getLineHeight(layout.fontSize());
+        int lineCount = layout.getLineCount();
+
+        float currentY = baselineOnFirstLine ? y : (y + (lineCount - 1) * lineHeight);
+        for (int i = 0; i < lineCount; i++) {
+            float currentX = x;
+            HBLayout.Line line = layout.getLine(i);
+            int glyphCount = line.glyphCount();
+
+            ensureBufferCapacity(glyphCount);
+            glyphBuffer.clear();
+
+            for (int j = 0; j < glyphCount; j++) {
+                int glyphId = line.glyphId(j);
+                GlyphEntry g = glyphCache.getOrCreate(glyphId);
+
+                glyphBuffer.putInt(g.glyphLoc)
+                    .putFloat(currentX + line.xOffset(j))
+                    .putFloat(currentY + line.yOffset(j))
+                    .putFloat(g.xBearing)
+                    .putFloat(g.yBearing)
+                    .putFloat(g.width)
+                    .putFloat(g.height);
+
+                currentX += line.xAdvance(j);
+                currentY += line.yAdvance(j);
+            }
+
+            glyphBuffer.flip();
+            uploadInstanceData();
+            Gdx.gl30.glDrawArraysInstanced(GL20.GL_TRIANGLES, 0, 6, glyphCount);
+
+            currentY -= lineHeight;
+        }
+
         mesh.unbind(shader);
-        Gdx.gl.glDisable(GL20.GL_BLEND);
+        if (!isBlending) {
+            Gdx.gl.glDisable(GL20.GL_BLEND);
+        }
 
         batch.setShader(oldShader);
+    }
+
+    // TODO: begin, end, flush
+
+    public void setColor(Color color) {
+        this.color[0] = color.r;
+        this.color[1] = color.g;
+        this.color[2] = color.b;
+        this.color[3] = color.a;
     }
 
     private void uploadInstanceData() {

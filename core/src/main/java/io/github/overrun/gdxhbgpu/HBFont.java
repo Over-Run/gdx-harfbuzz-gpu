@@ -13,6 +13,7 @@ public class HBFont implements Disposable {
     private final int hAscender;
     private final int hDescender;
     private final int hLineGap;
+    private final int lineHeight;
 
     public HBFont(HBBlob blob, int faceIndex) {
         face = hb_face_create(blob.blob(), faceIndex);
@@ -25,6 +26,7 @@ public class HBFont implements Disposable {
             hDescender = extents.descender();
             hLineGap = extents.line_gap();
         }
+        lineHeight = hAscender + hDescender - hLineGap;
     }
 
     @Override
@@ -62,6 +64,6 @@ public class HBFont implements Disposable {
     }
 
     public float getLineHeight(float fontSize) {
-        return unitsToPixels(hAscender + hDescender - hLineGap, fontSize);
+        return unitsToPixels(lineHeight, fontSize);
     }
 }
