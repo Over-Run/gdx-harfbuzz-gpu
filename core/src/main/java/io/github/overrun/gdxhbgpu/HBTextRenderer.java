@@ -2,16 +2,14 @@ package io.github.overrun.gdxhbgpu;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.*;
-import com.badlogic.gdx.graphics.g2d.Batch;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
+import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Disposable;
 
 import java.nio.ByteBuffer;
 
 import static org.lwjgl.system.MemoryUtil.*;
-import static org.lwjgl.util.harfbuzz.HarfBuzz.hb_buffer_create;
-import static org.lwjgl.util.harfbuzz.HarfBuzz.hb_buffer_destroy;
 import static org.lwjgl.util.harfbuzz.HarfBuzzGPU.*;
 
 public class HBTextRenderer implements Disposable {
@@ -39,7 +37,6 @@ public class HBTextRenderer implements Disposable {
         0, 1,
     };
     private final HBFont font;
-    private final long hbBuffer;
     private final GlyphCache glyphCache;
     private final ShaderProgram shader = createShader();
     private final Mesh mesh;
@@ -49,10 +46,14 @@ public class HBTextRenderer implements Disposable {
     private boolean bufferResized = true;
     private final float[] color = {1, 1, 1, 1};
     private final HBLayout layout;
+    private final Matrix4 projectionMatrix = new Matrix4();
+    private final Matrix4 transformMatrix = new Matrix4();
+    private final Matrix4 combinedMatrix = new Matrix4();
+    private boolean drawing = false;
+    private float lastFontSize;
 
     public HBTextRenderer(HBFont font) {
         this.font = font;
-        hbBuffer = hb_buffer_create();
         glyphCache = new GlyphCache(font.font(), 65536);
         glyphVbo = Gdx.gl.glGenBuffer();
         glyphBuffer = memAlloc(bufferCapacity * GLYPH_DATA_BYTES);
@@ -118,42 +119,79 @@ public class HBTextRenderer implements Disposable {
         return shaderProgram;
     }
 
-    public void drawText(Batch batch, String text, float x, float y, float fontSize) {
-        drawText(batch, text, x, y, fontSize, 0);
+    public void begin() {
+        if (drawing) throw new IllegalStateException("TextRenderer.end must be called before begin.");
+
+        glyphBuffer.clear();
+        shader.bind();
+        setupMatrices();
+        setupColor();
+
+        drawing = true;
     }
 
-    public void drawText(Batch batch, String text, float x, float y, float fontSize, float maxWidth) {
-        drawText(batch, text, x, y, fontSize, maxWidth, Align.left);
+    public void end() {
+        if (!drawing) throw new IllegalStateException("TextRenderer.begin must be called before end.");
+        if (glyphBuffer.position() > 0) flush();
+
+        drawing = false;
+        Gdx.gl.glDisable(GL20.GL_BLEND);
     }
 
-    public void drawText(Batch batch, String text, float x, float y, float fontSize, float maxWidth, int alignment) {
+    public void flush() {
+        if (glyphBuffer.position() == 0) return;
+
+        Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
+        Gdx.gl.glBindTexture(GL32.GL_TEXTURE_BUFFER, glyphCache.glTexture());
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFuncSeparate(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA, GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+
+        mesh.bind(shader);
+        glyphBuffer.flip();
+        uploadInstanceData();
+        Gdx.gl30.glDrawArraysInstanced(GL20.GL_TRIANGLES, 0, 6, glyphBuffer.remaining() / GLYPH_DATA_BYTES);
+        mesh.unbind(shader);
+        glyphBuffer.clear();
+    }
+
+    public void drawText(String text, float x, float y, float fontSize) {
+        drawText(text, x, y, fontSize, 0);
+    }
+
+    public void drawText(String text, float x, float y, float fontSize, float maxWidth) {
+        drawText(text, x, y, fontSize, maxWidth, Align.topLeft);
+    }
+
+    public void drawText(String text, float x, float y, float fontSize, float maxWidth, int alignment) {
+        drawText(text, x, y, Math.max(maxWidth, 0), 0, fontSize, maxWidth, alignment);
+    }
+
+    public void drawText(
+        String text,
+        float x,
+        float y,
+        float targetWidth,
+        float targetHeight,
+        float fontSize,
+        float maxWidth,
+        int alignment
+    ) {
         if (text.isEmpty()) return;
 
         layout.setText(text);
         layout.setFontSize(fontSize);
         layout.setMaxWidth(maxWidth);
-        layout.setAlignment(alignment);
-        drawLayout(batch, layout, x, y, true);
+        drawLayout(layout, x, y, targetWidth, targetHeight, alignment);
     }
 
-    public void drawLayout(Batch batch, HBLayout layout, float x, float y, boolean baselineOnFirstLine) {
+    public void drawLayout(HBLayout layout, float x, float y, boolean baselineOnFirstLine) {
+        if (!drawing) throw new IllegalStateException("TextRenderer.begin must be called before draw.");
         layout.buildIfNeeded();
 
-        ShaderProgram oldShader = batch.getShader();
-        batch.flush();
-
-        shader.bind();
-        shader.setUniformMatrix("u_projTrans", batch.getProjectionMatrix());
-        shader.setUniform4fv("u_color", this.color, 0, 4);
-        shader.setUniformf("u_fontSize", layout.fontSize());
-
-        Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
-        Gdx.gl.glBindTexture(GL32.GL_TEXTURE_BUFFER, glyphCache.glTexture());
-
-        boolean isBlending = Gdx.gl.glIsEnabled(GL20.GL_BLEND);
-        Gdx.gl.glEnable(GL20.GL_BLEND);
-        Gdx.gl.glBlendFuncSeparate(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA, GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
-        mesh.bind(shader);
+        float fontSize = layout.fontSize();
+        if (lastFontSize != fontSize) flush();
+        lastFontSize = fontSize;
+        setupFontSize(fontSize);
 
         float lineHeight = font.getLineHeight(layout.fontSize());
         int lineCount = layout.getLineCount();
@@ -165,7 +203,6 @@ public class HBTextRenderer implements Disposable {
             int glyphCount = line.glyphCount();
 
             ensureBufferCapacity(glyphCount);
-            glyphBuffer.clear();
 
             for (int j = 0; j < glyphCount; j++) {
                 int glyphId = line.glyphId(j);
@@ -183,28 +220,83 @@ public class HBTextRenderer implements Disposable {
                 currentY += line.yAdvance(j);
             }
 
-            glyphBuffer.flip();
-            uploadInstanceData();
-            Gdx.gl30.glDrawArraysInstanced(GL20.GL_TRIANGLES, 0, 6, glyphCount);
+            currentY -= lineHeight;
+        }
+    }
+
+    public void drawLayout(HBLayout layout, float x, float y, float targetWidth, float targetHeight, int alignment) {
+        if (!drawing) throw new IllegalStateException("TextRenderer.begin must be called before draw.");
+        layout.buildIfNeeded();
+
+        float fontSize = layout.fontSize();
+        if (lastFontSize != fontSize) flush();
+        lastFontSize = fontSize;
+        setupFontSize(fontSize);
+
+        float lineHeight = font.getLineHeight(layout.fontSize());
+        float hAscender = font.getHAscender(layout.fontSize());
+        int lineCount = layout.getLineCount();
+        float totalHeight = lineCount * lineHeight;
+
+        float textTop;
+        if (targetHeight > 0) {
+            if (Align.isTop(alignment)) {
+                textTop = y + targetHeight;
+            } else if (Align.isBottom(alignment)) {
+                textTop = y + totalHeight;
+            } else {
+                // center vertical
+                textTop = y + (targetHeight + totalHeight) / 2f;
+            }
+        } else {
+            textTop = y + hAscender;
+        }
+
+        float currentY = textTop - hAscender;
+        for (int i = 0; i < lineCount; i++) {
+            HBLayout.Line line = layout.getLine(i);
+            int glyphCount = line.glyphCount();
+
+            ensureBufferCapacity(glyphCount);
+
+            float lineX;
+            if (Align.isLeft(alignment)) {
+                lineX = x;
+            } else if (Align.isRight(alignment)) {
+                lineX = x + targetWidth - line.width();
+            } else {
+                // center horizontal
+                lineX = x + (targetWidth - line.width()) / 2f;
+            }
+
+            float currentX = lineX;
+            for (int j = 0; j < glyphCount; j++) {
+                int glyphId = line.glyphId(j);
+                GlyphEntry g = glyphCache.getOrCreate(glyphId);
+
+                glyphBuffer.putInt(g.glyphLoc)
+                    .putFloat(currentX + line.xOffset(j))
+                    .putFloat(currentY + line.yOffset(j))
+                    .putFloat(g.xBearing)
+                    .putFloat(g.yBearing)
+                    .putFloat(g.width)
+                    .putFloat(g.height);
+
+                currentX += line.xAdvance(j);
+                currentY += line.yAdvance(j);
+            }
 
             currentY -= lineHeight;
         }
-
-        mesh.unbind(shader);
-        if (!isBlending) {
-            Gdx.gl.glDisable(GL20.GL_BLEND);
-        }
-
-        batch.setShader(oldShader);
     }
 
-    // TODO: begin, end, flush
-
     public void setColor(Color color) {
+        if (drawing) flush();
         this.color[0] = color.r;
         this.color[1] = color.g;
         this.color[2] = color.b;
         this.color[3] = color.a;
+        if (drawing) setupColor();
     }
 
     private void uploadInstanceData() {
@@ -238,7 +330,8 @@ public class HBTextRenderer implements Disposable {
         bufferResized = false;
     }
 
-    private void ensureBufferCapacity(int capacity) {
+    private void ensureBufferCapacity(int glyphCount) {
+        int capacity = glyphBuffer.position() / GLYPH_DATA_BYTES + glyphCount;
         if (capacity < bufferCapacity) return;
         bufferCapacity = capacity * 2;
         glyphBuffer = memRealloc(glyphBuffer, bufferCapacity * GLYPH_DATA_BYTES);
@@ -251,7 +344,39 @@ public class HBTextRenderer implements Disposable {
         memFree(glyphBuffer);
         Gdx.gl.glDeleteBuffer(glyphVbo);
         glyphCache.dispose();
-        hb_buffer_destroy(hbBuffer);
         shader.dispose();
+    }
+
+    public Matrix4 projectionMatrix() {
+        return projectionMatrix;
+    }
+
+    public Matrix4 transformMatrix() {
+        return transformMatrix;
+    }
+
+    public void setProjectionMatrix(Matrix4 matrix) {
+        if (drawing) flush();
+        projectionMatrix.set(matrix);
+        if (drawing) setupMatrices();
+    }
+
+    public void setTransformMatrix(Matrix4 matrix) {
+        if (drawing) flush();
+        transformMatrix.set(matrix);
+        if (drawing) setupMatrices();
+    }
+
+    private void setupMatrices() {
+        combinedMatrix.set(projectionMatrix).mul(transformMatrix);
+        shader.setUniformMatrix("u_projTrans", combinedMatrix);
+    }
+
+    private void setupColor() {
+        shader.setUniform4fv("u_color", this.color, 0, 4);
+    }
+
+    private void setupFontSize(float fontSize) {
+        shader.setUniformf("u_fontSize", fontSize);
     }
 }

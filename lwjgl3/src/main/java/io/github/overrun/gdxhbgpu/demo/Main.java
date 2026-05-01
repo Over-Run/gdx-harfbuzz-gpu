@@ -6,9 +6,10 @@ import com.badlogic.gdx.InputProcessor;
 import com.badlogic.gdx.assets.AssetManager;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Graphics;
 import com.badlogic.gdx.graphics.Color;
-import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.ScreenUtils;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
+import com.ibm.icu.util.ULocale;
 import imgui.ImGui;
 import imgui.ImGuiIO;
 import imgui.gl3.ImGuiImplGl3;
@@ -16,10 +17,10 @@ import imgui.glfw.ImGuiImplGlfw;
 import io.github.overrun.gdxhbgpu.*;
 
 public class Main extends ApplicationAdapter {
+    private final String fontFileName;
     private AssetManager assetManager;
     private HBBlob hbBlob;
     private HBFont hbFont;
-    private SpriteBatch spriteBatch;
     private HBTextRenderer textRenderer;
     private final ScreenViewport viewport = new ScreenViewport();
     private final float[] scale = {1};
@@ -29,6 +30,10 @@ public class Main extends ApplicationAdapter {
     private static ImGuiImplGl3 imGuiGl3;
 
     private static InputProcessor tmpProcessor;
+
+    public Main(String fontFileName) {
+        this.fontFileName = fontFileName;
+    }
 
     public static void initImGui() {
         imGuiGlfw = new ImGuiImplGlfw();
@@ -79,13 +84,12 @@ public class Main extends ApplicationAdapter {
 
         assetManager = new AssetManager();
         HBBlobLoader.register(assetManager);
-        assetManager.load("font/font", HBBlob.class);
+        assetManager.load("font/" + fontFileName, HBBlob.class);
         assetManager.finishLoading();
 
-        hbBlob = assetManager.get("font/font");
+        hbBlob = assetManager.get("font/" + fontFileName);
         hbFont = new HBFont(hbBlob, 0);
 
-        spriteBatch = new SpriteBatch();
         textRenderer = new HBTextRenderer(hbFont);
 
         layout = new HBLayout(
@@ -93,6 +97,7 @@ public class Main extends ApplicationAdapter {
             "天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。The quick brown fox jumps over the lazy dog.",
             32
         );
+        layout.setLocale(ULocale.CHINA);
 
         initImGui();
     }
@@ -105,24 +110,26 @@ public class Main extends ApplicationAdapter {
 
         float fontSize = 32 * scale[0];
         float lineHeight = hbFont.getLineHeight(fontSize);
-        float descender = hbFont.unitsToPixels(hbFont.hDescender(), fontSize);
+        float hAscender = hbFont.getHAscender(fontSize);
+        float descender = hbFont.getHDescender(fontSize);
 
         viewport.apply();
-        spriteBatch.setProjectionMatrix(viewport.getCamera().combined);
-        spriteBatch.begin();
+        textRenderer.setProjectionMatrix(viewport.getCamera().combined);
+        textRenderer.begin();
         textRenderer.setColor(Color.GREEN);
-        textRenderer.drawText(spriteBatch, "FPS: " + Gdx.graphics.getFramesPerSecond(), 0, height - lineHeight, fontSize);
+        textRenderer.drawText("FPS: " + Gdx.graphics.getFramesPerSecond(), 0, height - hAscender, fontSize);
         textRenderer.setColor(Color.YELLOW);
-        textRenderer.drawText(spriteBatch, "Scale: " + scale[0], 0, height - 2 * lineHeight, fontSize);
+        textRenderer.drawText("Scale: " + scale[0], 0, 0, width, height, fontSize, 0, Align.topRight);
         textRenderer.setColor(Color.WHITE);
-        textRenderer.drawText(spriteBatch, "多行文本测试 Multiline text test\n" +
+        textRenderer.drawText("多行文本测试 Multiline text test\n" +
             "\n" +
             "第一行 Line 1\n" +
-            "第二行 Line 2", 0, height - 3 * lineHeight, fontSize);
+            "第二行 Line 2\n" +
+            "\uD83C\uDFA8 Emoji", 0, height - hAscender - lineHeight, fontSize);
         layout.setFontSize(fontSize);
         layout.setMaxWidth(width);
-        textRenderer.drawLayout(spriteBatch, layout, 0, -descender, false);
-        spriteBatch.end();
+        textRenderer.drawLayout(layout, 0, -descender, false);
+        textRenderer.end();
 
         startImGui();
         ImGui.sliderFloat("Scale", scale, 0, 3);
@@ -138,7 +145,6 @@ public class Main extends ApplicationAdapter {
     public void dispose() {
         hbFont.dispose();
         assetManager.dispose();
-        spriteBatch.dispose();
         textRenderer.dispose();
         disposeImGui();
     }

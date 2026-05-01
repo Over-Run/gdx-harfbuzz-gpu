@@ -20,10 +20,9 @@ public class HBLayout {
     private String text;
     private float fontSize;
     private float maxWidth;
-    // TODO: alignment
-    private int alignment;
     private List<Line> lines;
     private boolean dirty = true;
+    private ULocale locale = ULocale.getDefault();
 
     public HBLayout(
         HBFont font,
@@ -31,7 +30,7 @@ public class HBLayout {
         float fontSize,
         float maxWidth
     ) {
-        this.font = font;
+        this.font = Objects.requireNonNull(font);
         this.text = text;
         this.fontSize = fontSize;
         this.maxWidth = maxWidth;
@@ -106,15 +105,13 @@ public class HBLayout {
         }
     }
 
-    private void generateLines(String line, long hbBuffer) {
+    private void generateLines(String line, long hbBuffer, float scale) {
         if (maxWidth <= 0) {
-            generateSingleLine(line, hbBuffer);
+            generateSingleLine(line, hbBuffer, scale);
             return;
         }
-        float scale = fontSize / font.upem();
 
-        // TODO: locale
-        BreakIterator breakIterator = BreakIterator.getLineInstance(ULocale.CHINA);
+        BreakIterator breakIterator = BreakIterator.getLineInstance(locale);
         breakIterator.setText(line);
 
         IntArray lineGlyphIds = new IntArray();
@@ -174,7 +171,7 @@ public class HBLayout {
         }
     }
 
-    private void generateSingleLine(String line, long hbBuffer) {
+    private void generateSingleLine(String line, long hbBuffer, float scale) {
         hb_buffer_reset(hbBuffer);
         hb_buffer_add_utf16(hbBuffer, line, 0, -1);
         hb_buffer_guess_segment_properties(hbBuffer);
@@ -188,8 +185,6 @@ public class HBLayout {
 
         hb_glyph_info_t.Buffer glyphInfos = Objects.requireNonNull(hb_buffer_get_glyph_infos(hbBuffer));
         hb_glyph_position_t.Buffer glyphPositions = Objects.requireNonNull(hb_buffer_get_glyph_positions(hbBuffer));
-
-        float scale = fontSize / font.upem();
 
         int[] glyphIds = new int[glyphCount];
         float[] xOffsets = new float[glyphCount];
@@ -246,9 +241,10 @@ public class HBLayout {
 
         String[] split = LINE_SEP_PATTERN.split(text);
 
+        float scale = font.unitsToPixelFactor(fontSize);
         long hbBuffer = hb_buffer_create();
         for (String line : split) {
-            generateLines(line, hbBuffer);
+            generateLines(line, hbBuffer, scale);
         }
         hb_buffer_destroy(hbBuffer);
     }
@@ -263,10 +259,6 @@ public class HBLayout {
 
     public float fontSize() {
         return fontSize;
-    }
-
-    public int alignment() {
-        return alignment;
     }
 
     public int getLineCount() {
@@ -297,7 +289,7 @@ public class HBLayout {
     }
 
     public void setFont(HBFont font) {
-        this.font = font;
+        this.font = Objects.requireNonNull(font);
         invalidate();
     }
 
@@ -319,9 +311,8 @@ public class HBLayout {
         invalidate();
     }
 
-    public void setAlignment(int alignment) {
-        if (this.alignment == alignment) return;
-        this.alignment = alignment;
+    public void setLocale(ULocale locale) {
+        this.locale = locale != null ? locale : ULocale.getDefault();
         invalidate();
     }
 }

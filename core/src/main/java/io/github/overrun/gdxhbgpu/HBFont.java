@@ -26,7 +26,7 @@ public class HBFont implements Disposable {
             hDescender = extents.descender();
             hLineGap = extents.line_gap();
         }
-        lineHeight = hAscender + hDescender - hLineGap;
+        lineHeight = hAscender - hDescender + hLineGap;
     }
 
     @Override
@@ -47,6 +47,10 @@ public class HBFont implements Disposable {
         return upem;
     }
 
+    public float unitsToPixelFactor(float fontSize) {
+        return fontSize / upem;
+    }
+
     public int hAscender() {
         return hAscender;
     }
@@ -60,7 +64,15 @@ public class HBFont implements Disposable {
     }
 
     public float unitsToPixels(float units, float fontSizePx) {
-        return units * (fontSizePx / upem);
+        return units * unitsToPixelFactor(fontSizePx);
+    }
+
+    public float getHAscender(float fontSize) {
+        return unitsToPixels(hAscender, fontSize);
+    }
+
+    public float getHDescender(float fontSize) {
+        return unitsToPixels(hDescender, fontSize);
     }
 
     public float getLineHeight(float fontSize) {

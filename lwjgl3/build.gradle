@@ -53,6 +53,8 @@ dependencies {
   api "io.github.spair:imgui-java-natives-linux:$imguiVersion"
   api "io.github.spair:imgui-java-natives-macos:$imguiVersion"
   api "io.github.spair:imgui-java-natives-windows:$imguiVersion"
+
+  implementation("com.formdev:flatlaf:3.7.1")
 }
 
 def os = System.properties['os.name'].toLowerCase(Locale.ROOT)

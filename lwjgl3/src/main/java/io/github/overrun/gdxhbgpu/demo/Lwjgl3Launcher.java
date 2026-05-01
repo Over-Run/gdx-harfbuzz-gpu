@@ -2,8 +2,16 @@ package io.github.overrun.gdxhbgpu.demo;
 
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Application;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3ApplicationConfiguration;
+import com.formdev.flatlaf.FlatLightLaf;
 
-/** Launches the desktop (LWJGL3) application. */
+import javax.swing.*;
+import java.awt.*;
+import java.io.File;
+import java.lang.reflect.InvocationTargetException;
+
+/**
+ * Launches the desktop (LWJGL3) application.
+ */
 public class Lwjgl3Launcher {
     public static void main(String[] args) {
         if (StartupHelper.startNewJvmIfRequired()) return; // This handles macOS support and helps on Windows.
@@ -11,7 +19,50 @@ public class Lwjgl3Launcher {
     }
 
     private static Lwjgl3Application createApplication() {
-        return new Lwjgl3Application(new Main(), getDefaultConfiguration());
+        String[] fontFileNameHolder = new String[1];
+
+        try {
+            EventQueue.invokeAndWait(() -> {
+                FlatLightLaf.setup();
+
+                File fontDir = new File("font");
+                File[] files = fontDir.listFiles((dir, name) -> !name.equalsIgnoreCase("README.md"));
+                if (files == null || files.length == 0) {
+                    JOptionPane.showMessageDialog(null, "There is no font file found!", "Error", JOptionPane.ERROR_MESSAGE);
+                    fontFileNameHolder[0] = null;
+                    return;
+                }
+                String[] fontFileNames = new String[files.length];
+                for (int i = 0; i < files.length; i++) {
+                    fontFileNames[i] = files[i].getName();
+                }
+
+                Object selected = JOptionPane.showInputDialog(
+                    null,
+                    "Select a font: ",
+                    "Font selector",
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    fontFileNames,
+                    fontFileNames[0]
+                );
+
+                if (selected == null) {
+                    fontFileNameHolder[0] = fontFileNames[0];
+                } else {
+                    fontFileNameHolder[0] = selected.toString();
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            e.printStackTrace();
+            return null;
+        }
+
+        if (fontFileNameHolder[0] == null) {
+            return null;
+        }
+
+        return new Lwjgl3Application(new Main(fontFileNameHolder[0]), getDefaultConfiguration());
     }
 
     private static Lwjgl3ApplicationConfiguration getDefaultConfiguration() {
