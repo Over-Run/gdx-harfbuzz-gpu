@@ -1,3 +1,7 @@
+plugins {
+  id("maven-publish")
+}
+
 [compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
 eclipse.project.name = appName + '-core'
 
@@ -25,4 +29,15 @@ dependencies {
 
 jar {
   duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+publishing {
+  publications {
+    register("mavenJava", MavenPublication) {
+      from(components.java)
+      groupId = "io.github.over-run"
+      artifactId = "gdx-harfbuzz-gpu"
+      version = projectVersion
+    }
+  }
 }

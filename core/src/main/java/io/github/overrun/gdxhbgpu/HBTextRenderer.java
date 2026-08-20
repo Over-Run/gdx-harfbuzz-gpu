@@ -451,8 +451,13 @@ public class HBTextRenderer implements Disposable {
     private void setupMatrices() {
         combinedMatrix.set(projectionMatrix).mul(transformMatrix);
         shader.setUniformMatrix("u_projTrans", combinedMatrix);
-        viewport[0] = Gdx.graphics.getWidth();
-        viewport[1] = Gdx.graphics.getHeight();
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer p = stack.mallocInt(4);
+            Gdx.gl.glGetIntegerv(GL20.GL_VIEWPORT, p);
+            viewport[0] = p.get(2);
+            viewport[1] = p.get(3);
+        }
         shader.setUniform2fv("u_viewport", viewport, 0, 2);
     }
 
